@@ -2,8 +2,9 @@
 /**
  * vulnveto CLI.
  *
- *   vulnveto scan <github-repo-url> [--json]   full scan → report + SBOM
+ *   vulnveto scan <github-repo-url> [--json]   full security scan (SBOM, vulns, secrets, risk)
  *   vulnveto intel <github-repo-url>           repo inventory only
+ *   vulnveto review <pr-url> [--post]          AI code review of a PR (dry-run; --post publishes)
  *   vulnveto fix <github-repo-url>             scan, then interactively approve
  *                                              fixes → draft PRs (needs GITHUB_TOKEN)
  */
@@ -14,8 +15,9 @@ import { OpenAiCompatibleClient } from "./ai/adapter.js";
 import { runScan } from "./pipeline.js";
 import { analyzeRepo } from "./modules/repo-intel.js";
 import { applyBumpAsDraftPR } from "./modules/human-gate.js";
+import { parsePRUrl, reviewPR, postReview } from "./modules/pr-review.js";
 import { renderReport } from "./report.js";
-import type { ScanReport } from "./contracts.js";
+import type { AiClient, ScanReport } from "./contracts.js";
 
 function help(): void {
   console.log(`vulnveto — agentic repository security scanner
@@ -35,6 +37,7 @@ Config (env):
 
 Examples:
   vulnveto scan https://github.com/owner/repo
+  vulnveto review https://github.com/owner/repo/pull/42
   VULNVETO_AI=ollama vulnveto scan https://github.com/owner/repo --json
   vulnveto fix https://github.com/owner/repo`);
 }
@@ -96,6 +99,48 @@ async function cmdFix(repoUrl: string): Promise<void> {
   }
 }
 
+async function cmdReview(prUrl: string, post: boolean): Promise<void> {
+  const ref = parsePRUrl(prUrl);
+  const ai = new OpenAiCompatibleClient(loadConfig());
+  if (!ai.available) {
+    console.error("error: AI is required for review (VULNVETO_AI=none won't work here).");
+    process.exit(1);
+  }
+  console.log(`reviewing PR #${ref.number} on ${ref.owner}/${ref.repo}…`);
+  const { reviews, totalComments } = await reviewPR(
+    ai,
+    ref,
+    process.env.GITHUB_TOKEN,
+    (f) => console.log(`  …${f}`)
+  );
+
+  for (const r of reviews) {
+    if (r.comments.length === 0 && !r.summary) continue;
+    console.log(`\n## ${r.filename}`);
+    if (r.summary) console.log(r.summary);
+    for (const c of r.comments) {
+      console.log(`  [${c.severity}] line ${c.line}: ${c.body.replace(/^\*\*\[vulnveto · \w+\]\*\* /, "")}`);
+    }
+  }
+  console.log(`\n${totalComments} inline comment(s) across ${reviews.length} file(s).`);
+
+  if (!post) {
+    console.log(`dry-run: add --post to publish this review (needs GITHUB_TOKEN).`);
+    return;
+  }
+  if (!process.env.GITHUB_TOKEN) {
+    console.error("error: --post needs GITHUB_TOKEN.");
+    process.exit(1);
+  }
+  const answer = (await ask(`Post ${totalComments} comment(s) to PR #${ref.number}? [y/N] `)).trim().toLowerCase();
+  if (answer !== "y" && answer !== "yes") {
+    console.log("not posted.");
+    return;
+  }
+  const url = await postReview(process.env.GITHUB_TOKEN, ref, reviews);
+  console.log(`posted: ${url}`);
+}
+
 async function main(): Promise<void> {
   const [cmd, arg, flag] = process.argv.slice(2);
   if (!cmd || cmd === "--help" || cmd === "-h") return help();
@@ -103,6 +148,7 @@ async function main(): Promise<void> {
     if (cmd === "scan" && arg) await cmdScan(arg, flag === "--json");
     else if (cmd === "intel" && arg) await cmdIntel(arg);
     else if (cmd === "fix" && arg) await cmdFix(arg);
+    else if (cmd === "review" && arg) await cmdReview(arg, flag === "--post");
     else return help();
   } catch (err) {
     console.error(`error: ${(err as Error).message}`);

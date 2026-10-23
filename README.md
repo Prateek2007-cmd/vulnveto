@@ -16,8 +16,12 @@ npm run build
 # inventory a repo (clone + manifest map, no scan yet)
 node dist/index.js intel https://github.com/owner/repo
 
-# full scan (modules land lane by lane — see below)
+# full security scan (modules land lane by lane — see below)
 node dist/index.js scan https://github.com/owner/repo --json
+
+# AI code review of a pull request (ProPR-style, dry-run by default)
+node dist/index.js review https://github.com/owner/repo/pull/42
+node dist/index.js review https://github.com/owner/repo/pull/42 --post  # needs GITHUB_TOKEN
 ```
 
 ## AI backends (all free)
@@ -48,6 +52,8 @@ A scan never fails just because AI is unreachable.
 repo URL → repo-intel → dep-scan ─┐
                     → secret-scan ─┼→ findings[] → ai-remediation → risk report → human-gate → draft PR
                     → package-risk ┘                    (SBOM generated alongside)
+
+PR URL → pr-review → per-file AI review → inline comments + summary → --post (after your approval)
 ```
 
 Every module emits `Finding` objects (see `src/contracts.ts` — frozen shapes).
@@ -60,6 +66,7 @@ only writer: no commits, no PRs, no pushes without explicit approval.
 |---|---|---|
 | Ingest | `src/modules/repo-intel.ts` | repo inventory (done) |
 | Detect | `src/modules/dep-scan.ts`, `secret-scan.ts`, `package-risk.ts`, `sbom.ts` | OSV.dev, gitleaks, heuristics, CycloneDX |
+| Review | `src/modules/pr-review.ts` | ProPR-style AI PR review: diff fetch, relevance filter, per-file AI pass, inline comments + summary, `--post` gate |
 | Remediate | `src/modules/ai-remediation.ts`, `human-gate.ts` | fixes + confidence, approved draft PRs |
 | Experience | `src/report.ts`, CLI polish | explainable prioritized report |
 

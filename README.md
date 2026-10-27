@@ -7,6 +7,15 @@ fix PRs only after you explicitly approve them.
 
 Nothing merges on vibes. Everything passes the veto.
 
+## Prerequisites
+
+- Node.js 20 or later, with npm (see `engines` in `package.json`)
+- Git, for cloning the repositories you scan
+- A `GITHUB_TOKEN` only when you use the PR review `--post` option, to post comments to GitHub
+- A `VULNVETO_API_KEY` only when you use the Gemini AI backend
+
+Scans and dry-run PR reviews do not require a GitHub token.
+
 ## Quickstart
 
 ```bash
